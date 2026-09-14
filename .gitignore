@@ -1,0 +1,22 @@
+# Chaves e variáveis de ambiente (CRÍTICO: nunca enviar para o GitHub)
+.env
+*.env
+
+# Ambiente Virtual Python
+venv/
+env/
+.venv/
+
+# Banco de Dados Local e Logs
+*.db
+*.sqlite3
+data/*.db
+logs/*.log
+
+# Arquivos temporários e cache do Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Configurações locais do VS Code
+.vscode/
