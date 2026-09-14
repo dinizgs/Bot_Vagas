@@ -19,4 +19,4 @@ __pycache__/
 .pytest_cache/
 
 # Configurações locais do VS Code
-.vscode/
+.vscode/    
