@@ -1,0 +1,9 @@
+# Requisições e Scraping de Vagas
+requests
+beautifulsoup4
+
+# Bot do Telegram
+python-telegram-bot
+
+# Utilitários e Variáveis de Ambiente
+python-dotenv
