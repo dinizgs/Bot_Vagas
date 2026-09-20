@@ -64,9 +64,17 @@ class GerenciadorBanco:
             descricao, modalidade, tipo_vaga, salario_texto
         ) VALUES (
             :hash_vaga, :url, :fonte, :titulo, :empresa, :localizacao,
-            :descricao, :modallidade, :tipo_vaga, :salario_texto
+            :descricao, :modalidade, :tipo_vaga, :salario_texto
         )
         """
+
+        # Preenche chaves opcionais caso o scraper não as tenha enviado
+        for vaga in lista_vagas:
+            vaga.setdefault("hash_vaga", vaga.get("hash"))
+            vaga.setdefault("descricao", None)
+            vaga.setdefault("modalidade", "Indefinido")
+            vaga.setdefault("tipo_vaga", "Outro")
+            vaga.setdefault("salario_texto", "Não informado")
 
         with self.obter_conexao() as conexao:
             cursor = conexao.executemany(query, lista_vagas)
@@ -77,7 +85,7 @@ class GerenciadorBanco:
         query = """
         SELECT * FROM vagas
         WHERE notificada = 0 AND ativa = 1
-        ORDER  BY coletado_bot ASC
+        ORDER BY coletado_bot ASC
         LIMIT ?
         """
 
@@ -88,24 +96,22 @@ class GerenciadorBanco:
     def marcar_como_notificada(self, id_vaga):
         query = "UPDATE vagas SET notificada = 1 WHERE id_vaga = ?"
 
-        with self.obter_conexao as conexao:
+        with self.obter_conexao() as conexao: # Correção: adicionado ()
             conexao.execute(query, (id_vaga,))
             conexao.commit()
 
-    def registrar_log(self,fonte,encontradas,salvas,status,detalhes=None):
+    def registrar_log(self, fonte, encontradas, salvas, status, detalhes=None):
         query = """
         INSERT INTO logs_coleta (fonte, vagas_encontradas, vagas_salvas, status, detalhes)
         VALUES (?, ?, ?, ?, ?)
         """
 
-        with self.obter_conexao as conexao:
-            conexao.execute(query, (fonte,encontradas,salvas,status,detalhes))
+        with self.obter_conexao() as conexao: # Correção: adicionado ()
+            conexao.execute(query, (fonte, encontradas, salvas, status, detalhes))
             conexao.commit()
-            
+
 
 if __name__ == "__main__":
     db = GerenciadorBanco()
     db.criar_tabelas()
     print("Banco de Dados criado com sucesso!")
-        
-
