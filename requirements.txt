@@ -7,3 +7,6 @@ python-telegram-bot
 
 # Utilitários e Variáveis de Ambiente
 python-dotenv
+
+#Automação de testes e raspagem de dados
+playwright
