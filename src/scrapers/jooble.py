@@ -68,14 +68,15 @@ class JoobleScraper(BaseScraper):
                 tag_local = card.find("div", class_="gFo59w")
                 localizacao = tag_local.text.strip() if tag_local else "Remoto"
 
-                hash_vaga = self.gerar_hash(link, titulo)
+                link_limpo = link.split('?')[0]
+                hash_calculado = self.gerar_hash(link_limpo, titulo)
 
                 vaga = {
-                    "hash": hash_vaga,
+                    "hash_vaga": hash_calculado,
                     "titulo": titulo,
                     "empresa": empresa,
                     "localizacao": localizacao,
-                    "url": link,
+                    "url": link, 
                     "fonte": self.fonte
                 }
 
