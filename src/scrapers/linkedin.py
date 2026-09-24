@@ -163,5 +163,4 @@ if __name__ == "__main__":
         print(f"URL: {vaga['url']}")
         print(f"Hash: {vaga['hash_vaga']}")
         print("-" * 50)
-
         
