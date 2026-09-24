@@ -106,7 +106,7 @@ class GerenciadorBanco:
         VALUES (?, ?, ?, ?, ?)
         """
 
-        with self.obter_conexao() as conexao: # Correção: adicionado ()
+        with self.obter_conexao() as conexao: 
             conexao.execute(query, (fonte, encontradas, salvas, status, detalhes))
             conexao.commit()
 

@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import quote
 from playwright.sync_api import sync_playwright
 from .base import BaseScraper
+from src.filters import FiltroVagas
 
 class LinkedinScraper(BaseScraper):
     def __init__(self):
@@ -35,7 +36,6 @@ class LinkedinScraper(BaseScraper):
 
                 page.wait_for_selector("div.base-card, li.base-search-card, ul.jobs-search__results-list", timeout=15000)
 
-                # Rola a página para carregar mais vagas dinamicamente
                 for _ in range(4):
                     page.evaluate("window.scrollBy(0, 1000);")
                     time.sleep(1)
@@ -65,17 +65,6 @@ class LinkedinScraper(BaseScraper):
         if not cards:
             cards = [a.parent for a in soup.find_all("a") if "/jobs/view" in a.get("href", "")]
 
-        # Lista de filtros
-        TERMOS_INTERNACIONAIS = ["summer", "internship", "intern (", "united states", "global", "north america"]
-        
-        TERMOS_NIVEL_ENTRADA = [
-            "estágio", "estagio", "estagiário", "estagiario", 
-            "júnior", "junior", "jr", "desenvolvedor i", "developer i", 
-            "trainee", "associate", "analista de sistemas", "assistente"
-        ]
-
-        TERMOS_EXCLUIR_NIVEL = ["sênior", "senior", "pleno", "lead", "coordenador", "gerente", "head", "principal", "sr"]
-
         for card in cards:
             links_vaga = [
                 a.get("href", "") for a in card.find_all("a") 
@@ -99,23 +88,6 @@ class LinkedinScraper(BaseScraper):
 
             valor_titulo = elementos_texto[0]
             titulo = valor_titulo.split("(Vaga")[0].split("...")[0].strip()
-            titulo_lower = titulo.lower()
-
-            # 1. Elimina vagas internacionais
-            if any(termo_int in titulo_lower for termo_int in TERMOS_INTERNACIONAIS):
-                continue
-
-            # 2. Elimina níveis mais altos (Sênior, Pleno, Lead, etc.)
-            if any(nivel_alto in titulo_lower for nivel_alto in TERMOS_EXCLUIR_NIVEL):
-                continue
-
-            # 3. Garante que é vaga de entrada (Estágio, Júnior, Jr, Trainee, etc.)
-            if not any(nivel in titulo_lower for nivel in TERMOS_NIVEL_ENTRADA):
-                continue
-
-            texto_card_completo = " ".join(elementos_texto).lower()
-            if "presencial" in texto_card_completo or "híbrido" in texto_card_completo or "hibrido" in texto_card_completo:
-                continue
 
             empresa = "Empresa não informada"
             localizacao = ""
@@ -134,6 +106,12 @@ class LinkedinScraper(BaseScraper):
             if not localizacao:
                 localizacao = "Remoto"
 
+            texto_card_completo = " ".join(elementos_texto)
+
+            # APLICAÇÃO DO FILTRO CENTRALIZADO
+            if not FiltroVagas.validar_vaga(titulo=titulo, localizacao=localizacao, conteudo_card=texto_card_completo):
+                continue
+
             hash_gerado = self.gerar_hash(link_limpo, titulo)
 
             vagas.append({
@@ -149,14 +127,12 @@ class LinkedinScraper(BaseScraper):
 
 if __name__ == "__main__":
     bot_linkedin = LinkedinScraper()
-    
-    # Teste de busca por vagas Java de Estágio ou Júnior
     resultado = bot_linkedin.buscar_vagas(termo="Java (Estágio OR Junior OR Jr)", local="Brasil")
 
-    print(f"\n[LinkedIn] Total de vagas encontradas: {len(resultado)}")
+    print(f"\n[LinkedIn] Total de vagas validadas: {len(resultado)}")
     print("-" * 50)
 
-    for vaga in resultado:
+    for vaga in resultado[:3]:
         print(f"Título: {vaga['titulo']}")
         print(f"Empresa: {vaga['empresa']}")
         print(f"Local: {vaga['localizacao']}")
