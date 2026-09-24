@@ -97,5 +97,5 @@ if __name__ == "__main__":
         print(f"Empresa: {vaga['empresa']}")
         print(f"Local: {vaga['localizacao']}")
         print(f"URL: {vaga['url']}")
-        print(f"Hash: {vaga['hash']}")
-        print("-" * 50)
+        print(f"Hash: {vaga['hash_vaga']}")
+        print("-" * 50) 
