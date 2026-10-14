@@ -1,10 +1,12 @@
 import sqlite3
 from pathlib import Path
 
+
 class GerenciadorBanco:
     def __init__(self, caminho_banco="data/vagas.db"):
         self.caminho_banco = caminho_banco
         Path(self.caminho_banco).parent.mkdir(parents=True, exist_ok=True)
+        self.criar_tabelas()
 
     def obter_conexao(self):
         conexao = sqlite3.connect(self.caminho_banco)
@@ -57,7 +59,22 @@ class GerenciadorBanco:
         with self.obter_conexao() as conexao:
             conexao.executescript(query_sql)
 
-    def salvar_vagas(self, lista_vagas):
+    def salvar_vagas(self, vagas_input):
+        """
+        Salva uma vaga ou lista de vagas no banco de dados.
+        Retorna a quantidade de novas vagas efetivamente inseridas.
+        """
+        if not vagas_input:
+            return 0
+
+        # Aceita tanto um dicionario isolado quanto uma lista de dicionarios
+        if isinstance(vagas_input, dict):
+            lista_vagas = [vagas_input]
+        elif isinstance(vagas_input, list):
+            lista_vagas = vagas_input
+        else:
+            return 0
+
         query = """
         INSERT OR IGNORE INTO vagas(
             hash_vaga, url, fonte, titulo, empresa, localizacao,
@@ -70,7 +87,11 @@ class GerenciadorBanco:
 
         # Preenche chaves opcionais caso o scraper não as tenha enviado
         for vaga in lista_vagas:
-            vaga.setdefault("hash_vaga", vaga.get("hash"))
+            if not isinstance(vaga, dict):
+                continue
+            vaga.setdefault("hash_vaga", vaga.get("hash", ""))
+            vaga.setdefault("empresa", "Não informada")
+            vaga.setdefault("localizacao", "Não informado")
             vaga.setdefault("descricao", None)
             vaga.setdefault("modalidade", "Indefinido")
             vaga.setdefault("tipo_vaga", "Outro")
@@ -79,7 +100,7 @@ class GerenciadorBanco:
         with self.obter_conexao() as conexao:
             cursor = conexao.executemany(query, lista_vagas)
             conexao.commit()
-            return cursor.rowcount # Retorna a quantidade de novas vagas salvas
+            return cursor.rowcount
 
     def buscar_vagas_nao_notificadas(self, limite=10):
         query = """
@@ -96,7 +117,7 @@ class GerenciadorBanco:
     def marcar_como_notificada(self, id_vaga):
         query = "UPDATE vagas SET notificada = 1 WHERE id_vaga = ?"
 
-        with self.obter_conexao() as conexao: # Correção: adicionado ()
+        with self.obter_conexao() as conexao:
             conexao.execute(query, (id_vaga,))
             conexao.commit()
 
@@ -106,7 +127,7 @@ class GerenciadorBanco:
         VALUES (?, ?, ?, ?, ?)
         """
 
-        with self.obter_conexao() as conexao: 
+        with self.obter_conexao() as conexao:
             conexao.execute(query, (fonte, encontradas, salvas, status, detalhes))
             conexao.commit()
 

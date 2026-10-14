@@ -1,54 +1,59 @@
+# src/filters.py
+
 class FiltroVagas:
-    TERMOS_INTERNACIONAIS = [
-        "summer", "internship", "intern (", "united states", 
-        "global", "north america", "usa", "canada", "europe"
-    ]
-
+    # Palavras-chave obrigatórias no título ou conteúdo para nível de entrada
     TERMOS_NIVEL_ENTRADA = [
-        "estágio", "estagio", "estagiário", "estagiario", 
-        "júnior", "junior", "jr", "desenvolvedor i", "developer i", 
-        "trainee", "associate", "analista de sistemas", "assistente"
+        "estagio", "estágio", "estagiario", "estagiária", "trainee",
+        "junior", "júnior", "jr", "inicial", "entry level", "assistant", "assistente"
     ]
 
-    TERMOS_EXCLUIR_NIVEL = [
-        "sênior", "senior", "pleno", "lead", "coordenador", 
-        "gerente", "head", "principal", "sr", "tech lead"
+    # Palavras-chave de tecnologia / desenvolvimento
+    TERMOS_TECNOLOGIA = [
+        "desenvolvedor", "desenvolvedora", "developer", "dev", "software",
+        "programador", "programadora", "ti", "tecnologia", "web", "frontend",
+        "backend", "fullstack", "full-stack", "java", "python", "c#", "dotnet",
+        ".net", "php", "react", "node", "angular", "vue", "data", "dados",
+        "sistemas", "computacao", "computação", "engenharia de software"
     ]
 
-    TERMOS_REMOTOS = [
-        "remoto", "home office", "teletrabalho", "anywhere", "remote"
+    # Palavras estritamente proibidas no TÍTULO (níveis seniores)
+    TERMOS_PROIBIDOS_TITULO = [
+        "pleno", "pl", "senior", "sênior", "sr", "lead", "tech lead",
+        "especialista", "coordenador", "gerente", "head", "principal", "expert"
     ]
 
-    TERMOS_PRESENCIAIS = [
-        "presencial", "híbrido", "hibrido"
+    # Indicadores de vaga remota
+    TERMOS_REMOTO = [
+        "remoto", "remote", "home office", "home-office", "teletrabalho", "100% remoto"
     ]
 
     @classmethod
-    def validar_vaga(cls, titulo: str, localizacao: str = "", conteudo_card: str = "") -> bool:
-        """
-        Retorna True se a vaga passar por todos os filtros de validação.
-        """
+    def validar_vaga(cls, titulo: str, localizacao: str, conteudo_card: str = "") -> bool:
         titulo_lower = titulo.lower()
-        texto_completo = f"{titulo_lower} {localizacao.lower()} {conteudo_card.lower()}"
+        local_lower = localizacao.lower()
+        conteudo_lower = conteudo_card.lower()
 
-        # 1. Filtro Internacional
-        if any(termo in titulo_lower for termo in cls.TERMOS_INTERNACIONAIS):
+        #SOMENTE REMOTAS
+        eh_remoto = (
+            any(termo in local_lower for termo in cls.TERMOS_REMOTO) or
+            any(termo in titulo_lower for termo in cls.TERMOS_REMOTO) or
+            "remoto" in conteudo_lower
+        )
+        if not eh_remoto:
             return False
 
-        # 2. Filtro de Nível (Exclusão): Descarta Sênior, Pleno, Lead
-        if any(termo in titulo_lower for termo in cls.TERMOS_EXCLUIR_NIVEL):
+        # Bloqueio de vagas de nível Pleno/Sênior no TÍTULO
+        if any(termo in titulo_lower for termo in cls.TERMOS_PROIBIDOS_TITULO):
             return False
 
-        # 3. Filtro de Nível (Inclusão): Garante que é Estágio/Júnior
-        if not any(termo in titulo_lower for termo in cls.TERMOS_NIVEL_ENTRADA):
+        #Validação de Nível de Entrada (Estágio / Júnior / Jr)
+        tem_nivel_entrada = any(termo in titulo_lower or termo in conteudo_lower for termo in cls.TERMOS_NIVEL_ENTRADA)
+        if not tem_nivel_entrada:
             return False
 
-        # 4. Filtro de Presencial/Híbrido: Descarta se contiver no título ou no card
-        if any(termo in texto_completo for termo in cls.TERMOS_PRESENCIAIS):
-            return False
-
-        # 5. Trava de Trabalho Remoto: Confirma se existe algum termo que valide Home Office
-        if not any(termo in texto_completo for termo in cls.TERMOS_REMOTOS):
+        #Validação de Área (Desenvolvimento / TI / Engenharia)
+        tem_tecnologia = any(termo in titulo_lower or termo in conteudo_lower for termo in cls.TERMOS_TECNOLOGIA)
+        if not tem_tecnologia:
             return False
 
         return True

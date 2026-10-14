@@ -5,6 +5,7 @@ from playwright.sync_api import sync_playwright
 from .base import BaseScraper
 from src.filters import FiltroVagas
 
+
 class LinkedinScraper(BaseScraper):
     def __init__(self):
         super().__init__()
@@ -33,7 +34,6 @@ class LinkedinScraper(BaseScraper):
 
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
-
                 page.wait_for_selector("div.base-card, li.base-search-card, ul.jobs-search__results-list", timeout=15000)
 
                 for _ in range(4):
@@ -53,15 +53,9 @@ class LinkedinScraper(BaseScraper):
             return []
 
         soup = BeautifulSoup(conteudo_html, "html.parser")
-
-        CLASSES_CARDS = [
-            "base-card",
-            "base-search-card",
-            "job-search-card"
-        ]
+        CLASSES_CARDS = ["base-card", "base-search-card", "job-search-card"]
 
         cards = soup.find_all(["div", "li"], class_=CLASSES_CARDS)
-        
         if not cards:
             cards = [a.parent for a in soup.find_all("a") if "/jobs/view" in a.get("href", "")]
 
@@ -108,7 +102,6 @@ class LinkedinScraper(BaseScraper):
 
             texto_card_completo = " ".join(elementos_texto)
 
-            # APLICAÇÃO DO FILTRO CENTRALIZADO
             if not FiltroVagas.validar_vaga(titulo=titulo, localizacao=localizacao, conteudo_card=texto_card_completo):
                 continue
 
@@ -124,6 +117,7 @@ class LinkedinScraper(BaseScraper):
             })
 
         return vagas
+
 
 if __name__ == "__main__":
     bot_linkedin = LinkedinScraper()

@@ -1,7 +1,9 @@
+import time
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 from .base import BaseScraper
 from src.filters import FiltroVagas
+
 
 class JoobleScraper(BaseScraper):
     def __init__(self):
@@ -15,7 +17,6 @@ class JoobleScraper(BaseScraper):
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             )
@@ -23,7 +24,16 @@ class JoobleScraper(BaseScraper):
 
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                page.wait_for_selector('div[data-test-name="_jobCard"]', timeout=15000)
+                
+                # Tolerância a seletores dinâmicos/alterados do Jooble
+                try:
+                    page.wait_for_selector('div[data-test-name="_jobCard"], article, div[class*="job"]', timeout=10000)
+                except Exception:
+                    pass
+
+                page.evaluate("window.scrollBy(0, 800);")
+                time.sleep(1)
+
                 conteudo_html = page.content()
             except Exception as e:
                 print(f"Erro ao carregar a página no Jooble via Playwright: {e}")
@@ -35,11 +45,14 @@ class JoobleScraper(BaseScraper):
             return []
 
         soup = BeautifulSoup(conteudo_html, "html.parser")
+        
+        # Procura pelos atributos data-test-name ou por tags article genéricas
         cards = soup.find_all("div", attrs={"data-test-name": "_jobCard"})
+        if not cards:
+            cards = soup.find_all("article")
 
         for card in cards:
             tag_link = card.find("a")
-            
             if not tag_link:
                 continue
 
@@ -50,13 +63,9 @@ class JoobleScraper(BaseScraper):
                 link = f"https://br.jooble.org{link}"
 
             tag_empresa = card.find("div", class_="pxYhD4") or card.find("div", attrs={"data-test-name": "company-name"})
-
             if tag_empresa:
                 texto_empresa = tag_empresa.text.strip()
-                if texto_empresa.startswith("R$"):
-                    empresa = "Empresa não informada"
-                else:
-                    empresa = texto_empresa
+                empresa = "Empresa não informada" if texto_empresa.startswith("R$") else texto_empresa
             else:
                 empresa = "Empresa não informada"
 
@@ -65,23 +74,20 @@ class JoobleScraper(BaseScraper):
 
             texto_card_completo = card.get_text(separator=" ").strip()
 
-            # APLICAÇÃO DO FILTRO CENTRALIZADO
             if not FiltroVagas.validar_vaga(titulo=titulo, localizacao=localizacao, conteudo_card=texto_card_completo):
                 continue
 
-            link_limpo = link.split('?')[0]
+            link_limpo = link.split("?")[0]
             hash_calculado = self.gerar_hash(link_limpo, titulo)
 
-            vaga = {
+            vagas.append({
                 "hash_vaga": hash_calculado,
                 "titulo": titulo,
                 "empresa": empresa,
                 "localizacao": localizacao,
                 "url": link_limpo, 
                 "fonte": self.fonte
-            }
-
-            vagas.append(vaga)
+            })
 
         return vagas
 
