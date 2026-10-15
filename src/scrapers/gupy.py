@@ -12,7 +12,6 @@ class GupyScraper(BaseScraper):
         self.url_base = "https://portal.gupy.io/job-search"
 
     def extrair_empresa_dinamica(self, item, link):
-        # 1. Tenta pegar o nome da página/marca (ex: FCamara, SoftExpert, Instituto de Pesquisas ELDORADO)
         candidatos = [
             item.get("careerPageName"),
             item.get("companyName")
