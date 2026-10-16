@@ -9,11 +9,27 @@ class FiltroVagas:
 
     # Palavras-chave de tecnologia / desenvolvimento
     TERMOS_TECNOLOGIA = [
+        # Geral & Engenharia
         "desenvolvedor", "desenvolvedora", "developer", "dev", "software",
-        "programador", "programadora", "ti", "tecnologia", "web", "frontend",
-        "backend", "fullstack", "full-stack", "java", "python", "c#", "dotnet",
-        ".net", "php", "react", "node", "angular", "vue", "data", "dados",
-        "sistemas", "computacao", "computação", "engenharia de software"
+        "programador", "programadora", "ti", "tecnologia", "sistemas", 
+        "computacao", "computação", "engenharia de software", "engineer",
+
+        # Web & Mobile
+        "web", "frontend", "front-end", "backend", "back-end", 
+        "fullstack", "full-stack", "mobile", "android", "ios",
+
+        # Linguagens & Frameworks
+        "java", "python", "c#", "dotnet", ".net", "php", "javascript", 
+        "typescript", "react", "node", "angular", "vue", "golang", "ruby",
+
+        # Dados, IA & Analytics
+        "data", "dados", "analista de dados", "engenharia de dados", 
+        "data analyst", "data engineer", "data scientist", "ia", "ai", 
+        "inteligencia artificial", "artificial intelligence", "bi", "analytics",
+
+        # Qualidade, Testes & DevOps
+        "qa", "quality assurance", "tester", "testes", 
+        "devops", "cloud", "infraestrutura", "suporte"
     ]
 
     # Palavras estritamente proibidas no TÍTULO (níveis seniores)

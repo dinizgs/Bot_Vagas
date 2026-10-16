@@ -20,11 +20,7 @@ def executar_bot():
     notifier = TelegramNotifier()
 
     scrapers = [
-        CathoScraper(),
         GupyScraper(),
-        JoobleScraper(),
-        LinkedinScraper(),
-        RemotarScraper(),
     ]
 
     total_coletadas = 0
