@@ -1,4 +1,5 @@
 import time
+import random
 from urllib.parse import quote
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
@@ -12,18 +13,22 @@ class LinkedinScraper(BaseScraper):
         self.fonte = "LinkedIn"
         self.url_base = "https://br.linkedin.com/jobs/search/"
 
+    def _obter_user_agent(self):
+        user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ]
+        return random.choice(user_agents)
+
     def buscar_vagas(self, termo=None, local="Brasil"):
         vagas = []
         
-        # Lista abrangente
         termos_busca = [
-            #Busca Genérica / Entrada Principal
             "estagio ti",
             "estagio tecnologia",
             "estagio desenvolvimento",
             "ti junior",
-            
-            #Desenvolvimento & Engenharia (Backend, Frontend, Mobile, Fullstack)
             "desenvolvedor junior",
             "desenvolvedor backend junior",
             "desenvolvedor frontend junior",
@@ -33,8 +38,6 @@ class LinkedinScraper(BaseScraper):
             "desenvolvedor python junior",
             "desenvolvedor react junior",
             "desenvolvedor node junior",
-
-            #Dados, Business Intelligence & Inteligência Artificial
             "estagio dados",
             "estagio engenharia de dados",
             "analista de dados junior",
@@ -42,13 +45,9 @@ class LinkedinScraper(BaseScraper):
             "cientista de dados junior",
             "ia junior",
             "artificial intelligence intern",
-
-            #Qualidade, Testes & Automação (QA)
             "qa junior",
             "estagio qa",
             "analista de testes junior",
-
-            #Infraestrutura, DevOps, Cloud & Suporte Técnico
             "devops junior",
             "suporte ti junior",
             "analista de sistemas junior"
@@ -63,7 +62,7 @@ class LinkedinScraper(BaseScraper):
             )
 
             context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                user_agent=self._obter_user_agent(),
                 viewport={"width": 1280, "height": 800}
             )
 
@@ -72,90 +71,113 @@ class LinkedinScraper(BaseScraper):
             for t in termos_busca:
                 termo_encoded = quote(t)
                 local_encoded = quote(local)
-
                 url = f"{self.url_base}?keywords={termo_encoded}&location={local_encoded}&geoId=106057199&f_WT=2"
+
                 print(f"[{self.fonte}] Acessando busca: {t}")
 
-                try:
-                    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                # Tentativa de acesso com tolerância a AuthWall
+                sucesso = False
+                for tentativa in range(2):
+                    try:
+                        page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
-                    if "authwall" in page.url or "login" in page.url:
-                        print(f"[{self.fonte}] Authwall detectada para '{t}'. Ignorando termo...")
-                        time.sleep(3)
+                        # Verifica se caiu na AuthWall/Login imediatamente sem esperar timeout
+                        if "authwall" in page.url or "login" in page.url or "signup" in page.url:
+                            print(f"[{self.fonte}] AuthWall detectada no termo '{t}' (tentativa {tentativa + 1}). Renovando sessão...")
+                            page.close()
+                            context.close()
+                            
+                            # Abre novo contexto com User-Agent renovado
+                            context = browser.new_context(
+                                user_agent=self._obter_user_agent(),
+                                viewport={"width": 1280, "height": 800}
+                            )
+                            page = context.new_page()
+                            time.sleep(3)
+                            continue
+
+                        # Tenta localizar a lista de resultados
+                        page.wait_for_selector(
+                            "div.base-card, li.base-search-card, ul.jobs-search__results-list",
+                            timeout=8000
+                        )
+                        sucesso = True
+                        break
+
+                    except Exception as e:
+                        if tentativa == 1:
+                            print(f"[{self.fonte}] Erro ao carregar '{t}' após retentativa: {e}")
+
+                if not sucesso:
+                    continue
+
+                # Scroll gradual
+                for _ in range(3):
+                    page.evaluate("window.scrollBy(0, 800);")
+                    time.sleep(0.8)
+
+                conteudo_html = page.content()
+                soup = BeautifulSoup(conteudo_html, "html.parser")
+
+                CLASSES_CARDS = ["base-card", "base-search-card", "job-search-card"]
+                cards = soup.find_all(["div", "li"], class_=CLASSES_CARDS)
+
+                if not cards:
+                    cards = [a.parent for a in soup.find_all("a") if "/jobs/view" in a.get("href", "")]
+
+                for card in cards:
+                    links_vaga = [
+                        a.get("href", "") for a in card.find_all("a") 
+                        if "/jobs/view" in a.get("href", "")
+                    ]
+
+                    if not links_vaga:
                         continue
 
-                    page.wait_for_selector(
-                        "div.base-card, li.base-search-card, ul.jobs-search__results-list",
-                        timeout=10000
-                    )
+                    valor_link = links_vaga[0].strip()
+                    link_limpo = valor_link.split("?")[0]
 
-                    # Rolagem para disparar o lazy-loading de mais vagas
-                    for _ in range(4):
-                        page.evaluate("window.scrollBy(0, 1000);")
-                        time.sleep(1)
+                    elementos_texto = [
+                        elem.text.strip()
+                        for elem in card.find_all(["p", "span", "h3", "h4", "a"])
+                        if elem.text and elem.text.strip()
+                    ]
 
-                    conteudo_html = page.content()
-                    soup = BeautifulSoup(conteudo_html, "html.parser")
+                    if not elementos_texto:
+                        continue
 
-                    CLASSES_CARDS = ["base-card", "base-search-card", "job-search-card"]
-                    cards = soup.find_all(["div", "li"], class_=CLASSES_CARDS)
+                    valor_titulo = elementos_texto[0]
+                    titulo = valor_titulo.split("(Vaga")[0].split("...")[0].strip()
 
-                    if not cards:
-                        cards = [a.parent for a in soup.find_all("a") if "/jobs/view" in a.get("href", "")]
+                    empresa = "Empresa não informada"
+                    localizacao = ""
 
-                    for card in cards:
-                        links_vaga = [
-                            a.get("href", "") for a in card.find_all("a") 
-                            if "/jobs/view" in a.get("href", "")
-                        ]
-
-                        if not links_vaga:
+                    for texto in elementos_texto[1:]:
+                        if texto in ["...", "Vaga verificada"] or "candidatos" in texto.lower() or "candidatar-se" in texto.lower():
                             continue
 
-                        valor_link = links_vaga[0].strip()
-                        link_limpo = valor_link.split("?")[0]
+                        if any(loc in texto for loc in [",", "Remoto", "Brasil", "CE", "RJ", "SP", "MG", "PR", "BA", "RS", "SC"]):
+                            if not localizacao:
+                                localizacao = texto
 
-                        elementos_texto = [
-                            elem.text.strip()
-                            for elem in card.find_all(["p", "span", "h3", "h4", "a"])
-                            if elem.text and elem.text.strip()
-                        ]
+                        elif empresa == "Empresa não informada" and texto != valor_titulo and texto != titulo:
+                            empresa = texto
 
-                        if not elementos_texto:
-                            continue
+                    if not localizacao:
+                        localizacao = "Remoto"
 
-                        valor_titulo = elementos_texto[0]
-                        titulo = valor_titulo.split("(Vaga")[0].split("...")[0].strip()
+                    texto_card_completo = " ".join(elementos_texto)
 
-                        empresa = "Empresa não informada"
-                        localizacao = ""
+                    vagas_brutas.append({
+                        "titulo": titulo,
+                        "empresa": empresa,
+                        "localizacao": localizacao,
+                        "url": link_limpo,
+                        "texto_card": texto_card_completo
+                    })
 
-                        for texto in elementos_texto[1:]:
-                            if texto in ["...", "Vaga verificada"] or "candidatos" in texto.lower() or "candidatar-se" in texto.lower():
-                                continue
-
-                            if any(loc in texto for loc in [",", "Remoto", "Brasil", "CE", "RJ", "SP", "MG", "PR", "BA", "RS", "SC"]):
-                                if not localizacao:
-                                    localizacao = texto
-
-                            elif empresa == "Empresa não informada" and texto != valor_titulo and texto != titulo:
-                                empresa = texto
-
-                        if not localizacao:
-                            localizacao = "Remoto"
-
-                        texto_card_completo = " ".join(elementos_texto)
-
-                        vagas_brutas.append({
-                            "titulo": titulo,
-                            "empresa": empresa,
-                            "localizacao": localizacao,
-                            "url": link_limpo,
-                            "texto_card": texto_card_completo
-                        })
-
-                except Exception as e:
-                    print(f"[{self.fonte}] Erro ao buscar termo '{t}': {e}")
+                # Pausa estratégica e dinâmica entre requisições
+                time.sleep(random.uniform(2.0, 3.5))
 
             browser.close()
 
@@ -175,7 +197,6 @@ class LinkedinScraper(BaseScraper):
             if hash_gerado in hashes_vistos:
                 continue
 
-            # Filtro centralizado do sistema
             if not FiltroVagas.validar_vaga(titulo=titulo, localizacao=localizacao, conteudo_card=texto_card_completo):
                 continue
 
