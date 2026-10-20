@@ -1,5 +1,6 @@
 import time
 import random
+from collections import Counter
 from urllib.parse import quote
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
@@ -23,13 +24,23 @@ class LinkedinScraper(BaseScraper):
 
     def buscar_vagas(self, termo=None, local="Brasil"):
         vagas = []
-        
+
+        # Contador de motivos de descarte e exemplos de títulos
+        motivos = Counter()
+        exemplos = {}
+
         termos_busca = [
             "estagio ti",
             "estagio tecnologia",
             "estagio desenvolvimento",
+            "estagio engenharia de software",
+            "estagio software engineering",
+            "software engineer intern",
             "ti junior",
             "desenvolvedor junior",
+            "engenheiro de software junior",
+            "software engineer junior",
+            "jr software engineer",
             "desenvolvedor backend junior",
             "desenvolvedor frontend junior",
             "desenvolvedor fullstack junior",
@@ -86,7 +97,7 @@ class LinkedinScraper(BaseScraper):
                             print(f"[{self.fonte}] AuthWall detectada no termo '{t}' (tentativa {tentativa + 1}). Renovando sessão...")
                             page.close()
                             context.close()
-                            
+
                             # Abre novo contexto com User-Agent renovado
                             context = browser.new_context(
                                 user_agent=self._obter_user_agent(),
@@ -127,7 +138,7 @@ class LinkedinScraper(BaseScraper):
 
                 for card in cards:
                     links_vaga = [
-                        a.get("href", "") for a in card.find_all("a") 
+                        a.get("href", "") for a in card.find_all("a")
                         if "/jobs/view" in a.get("href", "")
                     ]
 
@@ -146,25 +157,37 @@ class LinkedinScraper(BaseScraper):
                     if not elementos_texto:
                         continue
 
-                    valor_titulo = elementos_texto[0]
-                    titulo = valor_titulo.split("(Vaga")[0].split("...")[0].strip()
+                    #Seletores do card público do LinkedIn
+                    el_titulo = card.select_one(".base-search-card__title")
+                    el_empresa = card.select_one(".base-search-card__subtitle")
+                    el_local = card.select_one(".job-search-card__location")
 
-                    empresa = "Empresa não informada"
-                    localizacao = ""
+                    if el_titulo:
+                        titulo = el_titulo.get_text(strip=True)
+                    else:
+                        titulo = elementos_texto[0].split("(Vaga")[0].split("...")[0].strip()
 
-                    for texto in elementos_texto[1:]:
-                        if texto in ["...", "Vaga verificada"] or "candidatos" in texto.lower() or "candidatar-se" in texto.lower():
-                            continue
+                    empresa = el_empresa.get_text(strip=True) if el_empresa else ""
+                    localizacao = el_local.get_text(strip=True) if el_local else ""
 
-                        if any(loc in texto for loc in [",", "Remoto", "Brasil", "CE", "RJ", "SP", "MG", "PR", "BA", "RS", "SC"]):
-                            if not localizacao:
-                                localizacao = texto
+                    if not empresa or not localizacao:
+                        for texto in elementos_texto[1:]:
+                            if texto == titulo or texto in ["...", "Vaga verificada"]:
+                                continue
+                            if "candidatos" in texto.lower() or "candidatar-se" in texto.lower():
+                                continue
 
-                        elif empresa == "Empresa não informada" and texto != valor_titulo and texto != titulo:
-                            empresa = texto
+                            if any(loc in texto for loc in [",", "Remoto", "Brasil", "Região", "CE", "RJ", "SP", "MG", "PR", "BA", "RS", "SC"]):
+                                if not localizacao:
+                                    localizacao = texto
+                            elif not empresa:
+                                empresa = texto
 
+                    #Sem localização, não dá para afirmar que é remota
+                    if not empresa:
+                        empresa = "Empresa não informada"
                     if not localizacao:
-                        localizacao = "Remoto"
+                        localizacao = "Não informado"
 
                     texto_card_completo = " ".join(elementos_texto)
 
@@ -195,9 +218,15 @@ class LinkedinScraper(BaseScraper):
             hash_gerado = self.gerar_hash(link_limpo, titulo)
 
             if hash_gerado in hashes_vistos:
+                motivos["duplicada"] += 1
                 continue
 
-            if not FiltroVagas.validar_vaga(titulo=titulo, localizacao=localizacao, conteudo_card=texto_card_completo):
+            # Validação com o motivo do descarte
+            aprovada, motivo = FiltroVagas.avaliar(titulo=titulo, localizacao=localizacao, conteudo_card=texto_card_completo)
+            if not aprovada:
+                motivos[motivo] += 1
+                if len(exemplos.setdefault(motivo, [])) < 5:
+                    exemplos[motivo].append(f"{titulo} | {localizacao}")
                 continue
 
             hashes_vistos.add(hash_gerado)
@@ -210,6 +239,11 @@ class LinkedinScraper(BaseScraper):
                 "url": link_limpo,
                 "fonte": self.fonte
             })
+
+        # Resumo do funil
+        print(f"[{self.fonte}] Motivos de descarte: {dict(motivos)}")
+        for motivo, titulos in exemplos.items():
+            print(f"   {motivo}: {titulos}")
 
         return vagas
 

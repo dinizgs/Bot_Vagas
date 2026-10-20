@@ -8,7 +8,6 @@ from src.notifier import TelegramNotifier
 # Importação dos scrapers das plataformas
 from src.scrapers.catho import CathoScraper
 from src.scrapers.gupy import GupyScraper
-from src.scrapers.jooble import JoobleScraper
 from src.scrapers.linkedin import LinkedinScraper
 from src.scrapers.remotar import RemotarScraper
 
@@ -21,6 +20,8 @@ def executar_bot():
 
     scrapers = [
         GupyScraper(),
+        LinkedinScraper(),
+        RemotarScraper(),
     ]
 
     total_coletadas = 0
