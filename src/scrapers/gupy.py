@@ -2,10 +2,29 @@ import re
 import time
 import random
 from collections import Counter
+from datetime import datetime, timezone
 from urllib.parse import urlencode, quote
 import requests
 from .base import BaseScraper
 from src.filters import FiltroVagas
+from src.config import (
+    USER_AGENT,
+    HTTP_TIMEOUT,
+    GUPY_LIMITE_POR_PAGINA,
+    GUPY_MAX_PAGINAS,
+    DELAY_MIN,
+    DELAY_MAX
+)
+
+
+def prazo_vencido(prazo_texto):
+    if not prazo_texto:
+        return False
+    try:
+        prazo = datetime.fromisoformat(prazo_texto.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return prazo < datetime.now(timezone.utc)
 
 
 class GupyScraper(BaseScraper):
@@ -14,16 +33,14 @@ class GupyScraper(BaseScraper):
         self.fonte = "Gupy"
         self.url_api = "https://portal.gupy.io/api/job-search/jobs"
 
-        # Quantas vagas pedir por página e quantas páginas ler por termo
-        self.limite_por_pagina = 100
-        self.max_paginas = 5
+        # Quantas vagas pedir por página e quantas páginas ler por termo (vindas do config.py)
+        self.limite_por_pagina = GUPY_LIMITE_POR_PAGINA
+        self.max_paginas = GUPY_MAX_PAGINAS
 
-        # Filtro de remoto na própria API (nome do parâmetro NÃO confirmado, veja a nota abaixo).
-        # Se a API der erro por causa dele, troque por {}. O filtro local continua valendo.
         self.filtro_remoto_na_api = {"workplaceType": "remote"}
 
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": USER_AGENT,
             "Accept": "application/json",
             "Referer": "https://portal.gupy.io/job-search"
         }
@@ -58,7 +75,7 @@ class GupyScraper(BaseScraper):
         url = f"{self.url_api}?{urlencode(params, quote_via=quote)}"
 
         try:
-            resposta = requests.get(url, headers=self.headers, timeout=30)
+            resposta = requests.get(url, headers=self.headers, timeout=HTTP_TIMEOUT)
         except Exception as e:
             print(f"[{self.fonte}] Erro de conexão em '{termo}' (offset {offset}): {e}")
             return []
@@ -84,41 +101,22 @@ class GupyScraper(BaseScraper):
         motivos = Counter()
         exemplos = {}
 
+        # Termos curtos e amplos (Pensando no contexto da Gupy)
         termos_busca = [
-            "estagio ti",
-            "estagio tecnologia",
-            "estagio desenvolvimento",
-            "estagio engenharia de software",
-            "estagio software engineering",
-            "software engineer intern",
-            "ti junior",
-            "desenvolvedor junior",
-            "pessoa desenvolvedora junior",
-            "engenheiro de software junior",
-            "software engineer junior",
-            "jr software engineer",
-            "desenvolvedor backend junior",
-            "desenvolvedor frontend junior",
-            "desenvolvedor fullstack junior",
-            "desenvolvedor mobile junior",
-            "desenvolvedor java junior",
-            "desenvolvedor python junior",
-            "desenvolvedor react junior",
-            "desenvolvedor node junior",
-            "estagio dados",
-            "estagio engenharia de dados",
-            "analista de dados junior",
-            "pessoa analista de dados",
-            "engenheiro de dados junior",
-            "cientista de dados junior",
-            "ia junior",
-            "artificial intelligence intern",
-            "qa junior",
-            "estagio qa",
-            "analista de testes junior",
-            "devops junior",
-            "suporte ti junior",
-            "analista de sistemas junior"
+            # Nível
+            "estagio", "estágio", "estagiario", "estagiária", "trainee",
+            "junior", "júnior", "jr",
+
+            # Desenvolvimento
+            "desenvolvedor", "desenvolvedora", "pessoa desenvolvedora",
+            "programador", "software", "dev",
+            "backend", "frontend", "full stack", "fullstack", "mobile",
+            "python", "java", "react", "node",
+
+            # TI, dados e áreas próximas
+            "ti", "tecnologia",
+            "analista de sistemas", "dados", "ia",
+            "qa", "testes", "devops", "infraestrutura", "suporte"
         ] if not termo else [termo]
 
         vagas_brutas = []
@@ -135,10 +133,15 @@ class GupyScraper(BaseScraper):
                 # Se veio menos que o limite, era a última página
                 if len(lista) < self.limite_por_pagina:
                     break
-                time.sleep(random.uniform(0.4, 0.9))
+                time.sleep(random.uniform(DELAY_MIN, DELAY_MAX))
 
             print(f"[{self.fonte}] '{t}': {total_termo} vagas")
-            time.sleep(random.uniform(0.5, 1.0))
+
+            # Aviso se o termo bateu no limite de páginas (pode haver mais vagas)
+            if total_termo >= self.limite_por_pagina * self.max_paginas:
+                print(f"[{self.fonte}] Aviso: '{t}' atingiu o limite de páginas, pode haver mais vagas")
+
+            time.sleep(random.uniform(DELAY_MIN, DELAY_MAX))
 
         print(f"[{self.fonte}] Total de vagas brutas capturadas: {len(vagas_brutas)}")
 
@@ -158,9 +161,14 @@ class GupyScraper(BaseScraper):
             if not link and item.get("id"):
                 link = f"https://portal.gupy.io/job/{item.get('id')}"
 
-            # Empresas inativas geram links quebrados (ex.: terras&15719&inactive.gupy.io)
+            # Empresas inativas geram links quebrados
             if "inactive" in link:
                 motivos["empresa_inativa"] += 1
+                continue
+
+            # Prazo de inscrição já encerrado
+            if prazo_vencido(item.get("applicationDeadline")):
+                motivos["vencida"] += 1
                 continue
 
             empresa = self.extrair_empresa_dinamica(item, link)
@@ -173,7 +181,6 @@ class GupyScraper(BaseScraper):
             elif tipo_trabalho:
                 localizacao = "Presencial/Híbrido"
             else:
-                # Sem o campo: só considera remota se o título disser
                 localizacao = "Remoto" if "remoto" in titulo.lower() else "Não informado"
 
             if localizacao == "Presencial/Híbrido":

@@ -1,26 +1,155 @@
+import re
 import time
 import random
 from collections import Counter
-from urllib.parse import quote
+import requests
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
 from .base import BaseScraper
-from src.filters import FiltroVagas
+from src.filters import FiltroVagas, normalizar, compilar
+from src.config import (
+    USER_AGENT,
+    HTTP_TIMEOUT,
+    LINKEDIN_MAX_PAGINAS,
+    LINKEDIN_MAX_DETALHES,
+    LINKEDIN_JANELA_INICIAL,
+    DELAY_MIN,
+    DELAY_MAX
+)
+
+
+REGEX_REMOTO = compilar(["remoto", "remote", "home office", "home-office", "teletrabalho", "100% remoto"])
+REGEX_NAO_REMOTO = compilar(["presencial", "hibrido", "hybrid", "on-site", "onsite"])
+
+# Rótulos de nível de experiência do LinkedIn que indicam vaga de entrada
+NIVEIS_ENTRADA_LINKEDIN = ["estagio", "pouca experiencia", "entry level", "internship"]
+
+# Textos prováveis de vaga que já não aceita candidaturas
+PADROES_ENCERRADA = [
+    "no longer accepting applications", "nao aceita mais candidaturas",
+    "nao estamos mais aceitando", "deixou de aceitar candidaturas"
+]
+
+
+def detectar_remoto(titulo, localizacao, descricao):
+    t = normalizar(titulo)
+    l = normalizar(localizacao)
+    d = normalizar(descricao)
+
+    if REGEX_REMOTO.search(t) or REGEX_REMOTO.search(l):
+        return True
+    if REGEX_NAO_REMOTO.search(t):
+        return False
+    # Descrição diz remoto e não menciona presencial/híbrido
+    if REGEX_REMOTO.search(d) and not REGEX_NAO_REMOTO.search(d):
+        return True
+    return False
 
 
 class LinkedinScraper(BaseScraper):
     def __init__(self):
         super().__init__()
         self.fonte = "LinkedIn"
-        self.url_base = "https://br.linkedin.com/jobs/search/"
+        self.url_busca = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+        self.url_detalhe = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{}"
 
-    def _obter_user_agent(self):
-        user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        ]
-        return random.choice(user_agents)
+        # Ajustes vindos do config.py
+        self.max_paginas = LINKEDIN_MAX_PAGINAS        
+        self.max_detalhes = LINKEDIN_MAX_DETALHES         
+        self.janela = LINKEDIN_JANELA_INICIAL       
+        self.bloqueado = False         
+
+        self.sessao = requests.Session()
+        self.sessao.headers.update({
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8"
+        })
+
+    def _get(self, url, params=None):
+        for tentativa in range(3):
+            try:
+                resposta = self.sessao.get(url, params=params, timeout=HTTP_TIMEOUT)
+            except Exception as e:
+                print(f"[{self.fonte}] Erro de conexão: {e}")
+                time.sleep(3)
+                continue
+
+            if resposta.status_code == 200:
+                return resposta.text
+
+            if resposta.status_code in (429, 999):
+                espera = 20 * (tentativa + 1)
+                print(f"[{self.fonte}] Limite de requisições (HTTP {resposta.status_code}). Aguardando {espera}s...")
+                time.sleep(espera)
+                continue
+
+            return ""
+
+        self.bloqueado = True
+        print(f"[{self.fonte}] Sem acesso após 3 tentativas. Encerrando as buscas desta rodada.")
+        return ""
+
+    def _extrair_id(self, card, href):
+        achou = re.search(r"(\d{6,})/?$", href)
+        if achou:
+            return achou.group(1)
+        el = card.find(attrs={"data-entity-urn": True})
+        if el:
+            achou = re.search(r"(\d{6,})", el["data-entity-urn"])
+            if achou:
+                return achou.group(1)
+        return None
+
+    def _extrair_cards(self, html):
+        soup = BeautifulSoup(html, "html.parser")
+        resultado = []
+
+        for card in soup.find_all("li"):
+            link_el = card.select_one("a.base-card__full-link") or card.find(
+                "a", href=lambda h: h and "/jobs/view/" in h
+            )
+            if not link_el:
+                continue
+
+            href = link_el.get("href", "").split("?")[0]
+            id_vaga = self._extrair_id(card, href)
+            if not id_vaga:
+                continue
+
+            el_titulo = card.select_one(".base-search-card__title")
+            el_empresa = card.select_one(".base-search-card__subtitle")
+            el_local = card.select_one(".job-search-card__location")
+
+            titulo = el_titulo.get_text(strip=True) if el_titulo else link_el.get_text(strip=True)
+            if not titulo:
+                continue
+
+            resultado.append({
+                "id": id_vaga,
+                "titulo": titulo,
+                "empresa": el_empresa.get_text(strip=True) if el_empresa else "Empresa não informada",
+                "localizacao": el_local.get_text(strip=True) if el_local else "Não informado",
+                "url": href
+            })
+
+        return resultado
+
+    def _extrair_detalhes(self, html):
+        soup = BeautifulSoup(html, "html.parser")
+
+        el_desc = soup.select_one(".show-more-less-html__markup") or soup.select_one(".description__text")
+        descricao = el_desc.get_text(" ", strip=True) if el_desc else ""
+
+        nivel = ""
+        for item in soup.select("li.description__job-criteria-item"):
+            cabecalho = item.select_one(".description__job-criteria-subheader")
+            valor = item.select_one(".description__job-criteria-text")
+            if cabecalho and valor:
+                rotulo = normalizar(cabecalho.get_text(strip=True))
+                if "nivel" in rotulo or "seniority" in rotulo:
+                    nivel = valor.get_text(strip=True)
+
+        return descricao, nivel
 
     def buscar_vagas(self, termo=None, local="Brasil"):
         vagas = []
@@ -29,218 +158,134 @@ class LinkedinScraper(BaseScraper):
         motivos = Counter()
         exemplos = {}
 
+        def registrar_descarte(motivo, titulo, localizacao=""):
+            motivos[motivo] += 1
+            if len(exemplos.setdefault(motivo, [])) < 5:
+                exemplos[motivo].append(f"{titulo} | {localizacao}" if localizacao else titulo)
+
+        # O LinkedIn ignora filtros de nível e modalidade, então o nível vai nas palavras-chave
         termos_busca = [
-            "estagio ti",
-            "estagio tecnologia",
-            "estagio desenvolvimento",
-            "estagio engenharia de software",
-            "estagio software engineering",
-            "software engineer intern",
-            "ti junior",
-            "desenvolvedor junior",
-            "engenheiro de software junior",
-            "software engineer junior",
-            "jr software engineer",
-            "desenvolvedor backend junior",
-            "desenvolvedor frontend junior",
-            "desenvolvedor fullstack junior",
-            "desenvolvedor mobile junior",
-            "desenvolvedor java junior",
-            "desenvolvedor python junior",
-            "desenvolvedor react junior",
-            "desenvolvedor node junior",
-            "estagio dados",
-            "estagio engenharia de dados",
-            "analista de dados junior",
-            "engenheiro de dados junior",
-            "cientista de dados junior",
-            "ia junior",
-            "artificial intelligence intern",
-            "qa junior",
-            "estagio qa",
-            "analista de testes junior",
-            "devops junior",
-            "suporte ti junior",
-            "analista de sistemas junior"
+            "estágio ti", "estágio tecnologia", "estágio desenvolvimento", "estágio desenvolvedor",
+            "estágio dados", "estágio qa", "estágio suporte ti",
+            "desenvolvedor júnior", "desenvolvedor jr", "pessoa desenvolvedora júnior",
+            "desenvolvedor backend júnior", "desenvolvedor frontend júnior", "desenvolvedor fullstack júnior",
+            "desenvolvedor mobile júnior", "desenvolvedor java júnior", "desenvolvedor python júnior",
+            "desenvolvedor react júnior", "desenvolvedor node júnior",
+            "analista de sistemas júnior", "analista de dados júnior", "engenheiro de dados júnior",
+            "cientista de dados júnior", "qa júnior", "analista de testes júnior",
+            "devops júnior", "suporte ti júnior", "ti júnior",
+            "desenvolvedor júnior remoto", "estágio ti remoto", "estágio desenvolvimento remoto"
         ] if not termo else [termo]
 
-        vagas_brutas = []
+        # Coleta (com paginação) e remove repetidas pelo id da vaga
+        candidatos = {}
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-            )
+        for t in termos_busca:
+            if self.bloqueado:
+                break
 
-            context = browser.new_context(
-                user_agent=self._obter_user_agent(),
-                viewport={"width": 1280, "height": 800}
-            )
+            novos = 0
+            for pagina in range(self.max_paginas):
+                params = {
+                    "keywords": t,
+                    "location": local,
+                    "geoId": "106057199",
+                    "f_TPR": self.janela,
+                    "start": pagina * 25
+                }
+                html = self._get(self.url_busca, params)
+                if not html:
+                    break
 
-            page = context.new_page()
-
-            for t in termos_busca:
-                termo_encoded = quote(t)
-                local_encoded = quote(local)
-                url = f"{self.url_base}?keywords={termo_encoded}&location={local_encoded}&geoId=106057199&f_WT=2"
-
-                print(f"[{self.fonte}] Acessando busca: {t}")
-
-                # Tentativa de acesso com tolerância a AuthWall
-                sucesso = False
-                for tentativa in range(2):
-                    try:
-                        page.goto(url, wait_until="domcontentloaded", timeout=30000)
-
-                        # Verifica se caiu na AuthWall/Login imediatamente sem esperar timeout
-                        if "authwall" in page.url or "login" in page.url or "signup" in page.url:
-                            print(f"[{self.fonte}] AuthWall detectada no termo '{t}' (tentativa {tentativa + 1}). Renovando sessão...")
-                            page.close()
-                            context.close()
-
-                            # Abre novo contexto com User-Agent renovado
-                            context = browser.new_context(
-                                user_agent=self._obter_user_agent(),
-                                viewport={"width": 1280, "height": 800}
-                            )
-                            page = context.new_page()
-                            time.sleep(3)
-                            continue
-
-                        # Tenta localizar a lista de resultados
-                        page.wait_for_selector(
-                            "div.base-card, li.base-search-card, ul.jobs-search__results-list",
-                            timeout=8000
-                        )
-                        sucesso = True
-                        break
-
-                    except Exception as e:
-                        if tentativa == 1:
-                            print(f"[{self.fonte}] Erro ao carregar '{t}' após retentativa: {e}")
-
-                if not sucesso:
-                    continue
-
-                # Scroll gradual
-                for _ in range(3):
-                    page.evaluate("window.scrollBy(0, 800);")
-                    time.sleep(0.8)
-
-                conteudo_html = page.content()
-                soup = BeautifulSoup(conteudo_html, "html.parser")
-
-                CLASSES_CARDS = ["base-card", "base-search-card", "job-search-card"]
-                cards = soup.find_all(["div", "li"], class_=CLASSES_CARDS)
-
+                cards = self._extrair_cards(html)
                 if not cards:
-                    cards = [a.parent for a in soup.find_all("a") if "/jobs/view" in a.get("href", "")]
+                    break
 
-                for card in cards:
-                    links_vaga = [
-                        a.get("href", "") for a in card.find_all("a")
-                        if "/jobs/view" in a.get("href", "")
-                    ]
+                for c in cards:
+                    if c["id"] not in candidatos:
+                        candidatos[c["id"]] = c
+                        novos += 1
 
-                    if not links_vaga:
-                        continue
+                time.sleep(random.uniform(DELAY_MIN, DELAY_MAX))
 
-                    valor_link = links_vaga[0].strip()
-                    link_limpo = valor_link.split("?")[0]
+            print(f"[{self.fonte}] '{t}': {novos} vagas novas (únicas até agora: {len(candidatos)})")
 
-                    elementos_texto = [
-                        elem.text.strip()
-                        for elem in card.find_all(["p", "span", "h3", "h4", "a"])
-                        if elem.text and elem.text.strip()
-                    ]
+        print(f"[{self.fonte}] Total de vagas brutas capturadas: {len(candidatos)}")
 
-                    if not elementos_texto:
-                        continue
+        # Triagem pelo título, antes de abrir a página de cada vaga
+        pre_aprovados = []
+        for c in candidatos.values():
+            ok, motivo = FiltroVagas.avaliar_titulo(c["titulo"])
+            if not ok:
+                registrar_descarte(motivo, c["titulo"], c["localizacao"])
+                continue
+            pre_aprovados.append(c)
 
-                    #Seletores do card público do LinkedIn
-                    el_titulo = card.select_one(".base-search-card__title")
-                    el_empresa = card.select_one(".base-search-card__subtitle")
-                    el_local = card.select_one(".job-search-card__location")
+        # Prioriza quem já tem estágio/júnior no título e limita a quantidade de páginas abertas
+        pre_aprovados.sort(key=lambda c: 0 if FiltroVagas.REGEX_NIVEL.search(normalizar(c["titulo"])) else 1)
 
-                    if el_titulo:
-                        titulo = el_titulo.get_text(strip=True)
-                    else:
-                        titulo = elementos_texto[0].split("(Vaga")[0].split("...")[0].strip()
+        if len(pre_aprovados) > self.max_detalhes:
+            motivos["alem_do_limite_de_detalhes"] += len(pre_aprovados) - self.max_detalhes
+            pre_aprovados = pre_aprovados[:self.max_detalhes]
 
-                    empresa = el_empresa.get_text(strip=True) if el_empresa else ""
-                    localizacao = el_local.get_text(strip=True) if el_local else ""
+        print(f"[{self.fonte}] Após triagem pelo título: {len(pre_aprovados)} vagas para abrir")
 
-                    if not empresa or not localizacao:
-                        for texto in elementos_texto[1:]:
-                            if texto == titulo or texto in ["...", "Vaga verificada"]:
-                                continue
-                            if "candidatos" in texto.lower() or "candidatar-se" in texto.lower():
-                                continue
-
-                            if any(loc in texto for loc in [",", "Remoto", "Brasil", "Região", "CE", "RJ", "SP", "MG", "PR", "BA", "RS", "SC"]):
-                                if not localizacao:
-                                    localizacao = texto
-                            elif not empresa:
-                                empresa = texto
-
-                    #Sem localização, não dá para afirmar que é remota
-                    if not empresa:
-                        empresa = "Empresa não informada"
-                    if not localizacao:
-                        localizacao = "Não informado"
-
-                    texto_card_completo = " ".join(elementos_texto)
-
-                    vagas_brutas.append({
-                        "titulo": titulo,
-                        "empresa": empresa,
-                        "localizacao": localizacao,
-                        "url": link_limpo,
-                        "texto_card": texto_card_completo
-                    })
-
-                # Pausa estratégica e dinâmica entre requisições
-                time.sleep(random.uniform(2.0, 3.5))
-
-            browser.close()
-
-        print(f"[{self.fonte}] Total de vagas brutas capturadas: {len(vagas_brutas)}")
-
+        # Abre a página da vaga, lê descrição e nível, aplica o filtro completo
         hashes_vistos = set()
 
-        for item in vagas_brutas:
-            titulo = item["titulo"]
-            link_limpo = item["url"]
-            empresa = item["empresa"]
-            localizacao = item["localizacao"]
-            texto_card_completo = item["texto_card"]
+        for c in pre_aprovados:
+            if self.bloqueado:
+                break
 
-            hash_gerado = self.gerar_hash(link_limpo, titulo)
+            html = self._get(self.url_detalhe.format(c["id"]))
+            time.sleep(random.uniform(DELAY_MIN, DELAY_MAX))
 
-            if hash_gerado in hashes_vistos:
+            if not html:
+                registrar_descarte("sem_detalhe", c["titulo"], c["localizacao"])
+                continue
+
+            if any(p in normalizar(html) for p in PADROES_ENCERRADA):
+                registrar_descarte("encerrada", c["titulo"], c["localizacao"])
+                continue
+
+            descricao, nivel = self._extrair_detalhes(html)
+
+            eh_remoto = detectar_remoto(c["titulo"], c["localizacao"], descricao)
+            nivel_norm = normalizar(nivel)
+            nivel_entrada = any(n in nivel_norm for n in NIVEIS_ENTRADA_LINKEDIN)
+
+            # O filtro recebe a modalidade e o nível já resolvidos
+            local_para_filtro = "Remoto" if eh_remoto else c["localizacao"]
+            conteudo_para_filtro = f"{c['titulo']} {'entry level' if nivel_entrada else ''}"
+
+            aprovada, motivo = FiltroVagas.avaliar(
+                titulo=c["titulo"],
+                localizacao=local_para_filtro,
+                conteudo_card=conteudo_para_filtro
+            )
+            if not aprovada:
+                registrar_descarte(motivo, c["titulo"], c["localizacao"])
+                continue
+
+            link_limpo = c["url"]
+            hash_calculado = self.gerar_hash(link_limpo, c["titulo"])
+            if hash_calculado in hashes_vistos:
                 motivos["duplicada"] += 1
                 continue
+            hashes_vistos.add(hash_calculado)
 
-            # Validação com o motivo do descarte
-            aprovada, motivo = FiltroVagas.avaliar(titulo=titulo, localizacao=localizacao, conteudo_card=texto_card_completo)
-            if not aprovada:
-                motivos[motivo] += 1
-                if len(exemplos.setdefault(motivo, [])) < 5:
-                    exemplos[motivo].append(f"{titulo} | {localizacao}")
-                continue
-
-            hashes_vistos.add(hash_gerado)
+            cidade = c["localizacao"]
+            localizacao_final = "Remoto" if cidade in ("Brasil", "Brazil", "Não informado") else f"Remoto ({cidade})"
 
             vagas.append({
-                "hash_vaga": hash_gerado,
-                "titulo": titulo,
-                "empresa": empresa,
-                "localizacao": localizacao,
+                "hash_vaga": hash_calculado,
+                "titulo": c["titulo"],
+                "empresa": c["empresa"],
+                "localizacao": localizacao_final,
                 "url": link_limpo,
                 "fonte": self.fonte
             })
 
-        # Resumo do funil
         print(f"[{self.fonte}] Motivos de descarte: {dict(motivos)}")
         for motivo, titulos in exemplos.items():
             print(f"   {motivo}: {titulos}")
@@ -262,4 +307,3 @@ if __name__ == "__main__":
         print(f"URL: {vaga['url']}")
         print(f"Hash: {vaga['hash_vaga']}")
         print("-" * 50)
-        

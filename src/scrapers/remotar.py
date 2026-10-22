@@ -1,11 +1,19 @@
+import re
 import time
 import random
-from collections import Counter  # [NOVO]
+from collections import Counter
 from urllib.parse import quote
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 from .base import BaseScraper
-from src.filters import FiltroVagas, normalizar, compilar  
+from src.filters import FiltroVagas
+from src.config import (
+    USER_AGENT,
+    REMOTAR_MAX_ROLAGENS,
+    DELAY_MIN,
+    DELAY_MAX,
+    HTTP_TIMEOUT
+)
 
 
 class RemotarScraper(BaseScraper):
@@ -13,86 +21,58 @@ class RemotarScraper(BaseScraper):
         super().__init__()
         self.fonte = "Remotar"
         self.url_base = "https://remotar.com.br"
-
-        self.KEYWORDS_TECH = [
-            "desenvolvedor", "developer", "programador", "software", "frontend", "front-end",
-            "backend", "back-end", "fullstack", "full-stack", "ti", "tecnologia", "dados",
-            "data", "qa", "testes", "tester", "quality assurance", "devops", "infraestrutura",
-            "suporte", "sistemas", "python", "java", "react", "node", "ia", "artificial intelligence",
-            "computacao", "sistemas de informacao", "engenharia de software"
-        ]
-
-        # Áreas não-tech a serem ignoradas no Remotar
-        self.TERMOS_IGNORAR = [
-            "comercial", "pré-vendas", "pre-vendas", "fpa", "fp&a", "controladoria",
-            "contábil", "contabil", "administrativo", "marketing", "redator", "copywriter",
-            "rh", "recursos humanos", "jurídico", "juridico", "vendas", "backoffice", "afiliados"
-        ]
-
-        self.EXCECOES_SUPORTE = ["suporte ti", "suporte técnico", "suporte tecnico"]
-
-        self.REGEX_TECH = compilar(self.KEYWORDS_TECH)
-        self.REGEX_IGNORAR = compilar(self.TERMOS_IGNORAR)
-        self.REGEX_EXCECOES = compilar(self.EXCECOES_SUPORTE)
+        self.max_rolagens = REMOTAR_MAX_ROLAGENS  # limite vindo do config.py
 
     def _obter_user_agent(self):
         user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            USER_AGENT,
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
         ]
         return random.choice(user_agents)
 
-    def _eh_vaga_tech(self, texto):
-        texto_norm = normalizar(texto)
+    def _carregar_tudo(self, page):
+        # Rola até a quantidade de vagas parar de crescer (lista com carregamento infinito)
+        anterior = -1
+        estavel = 0
 
-        if self.REGEX_IGNORAR.search(texto_norm):
-            if not self.REGEX_EXCECOES.search(texto_norm):
-                return False
-            
-        return bool(self.REGEX_TECH.search(texto_norm))
+        for _ in range(self.max_rolagens):
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(1.2)
+
+            # Se existir botão de "ver mais", clica e olha
+            try:
+                botao = page.locator('button:has-text("Ver mais"), button:has-text("Carregar mais")').first
+                if botao.count() > 0 and botao.is_visible():
+                    botao.click()
+                    time.sleep(1.0)
+            except Exception:
+                pass
+
+            atual = page.locator('a[href*="/job/"]').count()
+            if atual == anterior:
+                estavel += 1
+                if estavel >= 2:
+                    break
+            else:
+                estavel = 0
+            anterior = atual
 
     def buscar_vagas(self, termo=None, local="remoto"):
         vagas = []
 
+        # Contador de motivos de descarte e exemplos de títulos
         motivos = Counter()
         exemplos = {}
 
+        # Termos curtos e amplos (o filtro decide o nível e a área depois)
         termos_busca = [
-            "estagio ti",
-            "estagio tecnologia",
-            "estagio desenvolvimento",
-            "estagio engenharia de software",
-            "estagio software engineering",
-            "software engineer intern",
-            "ti junior",
-            "desenvolvedor junior",
-            "engenheiro de software junior",
-            "software engineer junior",
-            "jr software engineer",
-            "desenvolvedor backend junior",
-            "desenvolvedor frontend junior",
-            "desenvolvedor fullstack junior",
-            "desenvolvedor mobile junior",
-            "desenvolvedor java junior",
-            "desenvolvedor python junior",
-            "desenvolvedor react junior",
-            "desenvolvedor node junior",
-            "estagio dados",
-            "estagio engenharia de dados",
-            "analista de dados junior",
-            "engenheiro de dados junior",
-            "cientista de dados junior",
-            "ia junior",
-            "artificial intelligence intern",
-            "qa junior",
-            "estagio qa",
-            "analista de testes junior",
-            "devops junior",
-            "suporte ti junior",
-            "analista de sistemas junior"
+            "estagio", "estágio", "junior", "júnior", "jr", "trainee",
+            "desenvolvedor", "desenvolvedora", "software", "backend", "frontend", "fullstack",
+            "python", "java", "react", "node",
+            "dados", "qa", "ti", "tecnologia", "devops", "suporte", "analista de sistemas"
         ] if not termo else [termo]
 
-        vagas_brutas = []
+        vagas_brutas = {}
 
         with sync_playwright() as p:
             browser = p.chromium.launch(
@@ -108,23 +88,18 @@ class RemotarScraper(BaseScraper):
             page = context.new_page()
 
             for t in termos_busca:
-                termo_encoded = quote(t)
-                url_busca = f"{self.url_base}/search/jobs?q={termo_encoded}"
-                print(f"[{self.fonte}] Acessando busca: {t}")
+                url_busca = f"{self.url_base}/search/jobs?q={quote(t)}"
 
                 try:
-                    page.goto(url_busca, wait_until="domcontentloaded", timeout=25000)
+                    page.goto(url_busca, wait_until="domcontentloaded", timeout=HTTP_TIMEOUT * 1000)
                     time.sleep(2.5)
 
-                    for _ in range(3):
-                        page.evaluate("window.scrollBy(0, 800);")
-                        time.sleep(0.5)
+                    self._carregar_tudo(page)
 
-                    conteudo_html = page.content()
-                    soup = BeautifulSoup(conteudo_html, "html.parser")
-
+                    soup = BeautifulSoup(page.content(), "html.parser")
                     links_vaga = soup.find_all("a", href=lambda h: h and "/job/" in h)
 
+                    novos = 0
                     for a in links_vaga:
                         href = a.get("href", "").strip()
                         url_vaga = f"{self.url_base}{href}" if href.startswith("/") else href
@@ -133,12 +108,12 @@ class RemotarScraper(BaseScraper):
                         if not texto_card or len(texto_card) < 8:
                             continue
 
-                        # Filtro de escopo Tech pré-validação
-                        if not self._eh_vaga_tech(texto_card):
-                            motivos["fora_de_ti"] += 1
+                        # Id da vaga na URL (Para não se repetir entre termos)
+                        achou_id = re.search(r"/job/(\d+)", href)
+                        chave = achou_id.group(1) if achou_id else url_vaga
+                        if chave in vagas_brutas:
                             continue
 
-                        # Extração do Título
                         titulo_el = a.find(["h1", "h2", "h3", "h4", "strong", "p"])
                         titulo = titulo_el.get_text(strip=True) if titulo_el else texto_card.split("•")[0].strip()
 
@@ -148,17 +123,20 @@ class RemotarScraper(BaseScraper):
                         else:
                             empresa = "Empresa parceira Remotar"
 
-                        vagas_brutas.append({
+                        vagas_brutas[chave] = {
                             "titulo": titulo,
                             "empresa": empresa,
                             "url": url_vaga,
                             "texto_card": texto_card
-                        })
+                        }
+                        novos += 1
+
+                    print(f"[{self.fonte}] '{t}': {len(links_vaga)} links, {novos} vagas novas (únicas até agora: {len(vagas_brutas)})")
 
                 except Exception as e:
                     print(f"[{self.fonte}] Erro ao carregar termo '{t}': {e}")
 
-                time.sleep(random.uniform(1.5, 2.5))
+                time.sleep(random.uniform(DELAY_MIN, DELAY_MAX))
 
             browser.close()
 
@@ -166,21 +144,18 @@ class RemotarScraper(BaseScraper):
 
         hashes_vistos = set()
 
-        for item in vagas_brutas:
+        for item in vagas_brutas.values():
             titulo = item["titulo"]
-            link = item["url"]
+            link_limpo = item["url"].split("?")[0]
             empresa = item["empresa"]
             texto_card = item["texto_card"]
             localizacao = "Remoto"
 
-            link_limpo = link.split("?")[0]
             hash_calculado = self.gerar_hash(link_limpo, titulo)
-
             if hash_calculado in hashes_vistos:
                 motivos["duplicada"] += 1
                 continue
 
-            #Validação centralizada do FiltroVagas com o motivo do descarte
             aprovada, motivo = FiltroVagas.avaliar(titulo=titulo, localizacao=localizacao, conteudo_card=texto_card)
             if not aprovada:
                 motivos[motivo] += 1
@@ -199,7 +174,6 @@ class RemotarScraper(BaseScraper):
                 "fonte": self.fonte
             })
 
-        # [NOVO] Resumo do funil
         print(f"[{self.fonte}] Motivos de descarte: {dict(motivos)}")
         for motivo, titulos in exemplos.items():
             print(f"   {motivo}: {titulos}")
@@ -221,7 +195,6 @@ if __name__ == "__main__":
         print(f"URL: {vaga['url']}")
         print(f"Hash: {vaga['hash_vaga']}")
         print("-" * 50)
-
 
 
         

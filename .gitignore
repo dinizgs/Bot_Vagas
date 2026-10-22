@@ -12,6 +12,8 @@ env/
 *.sqlite3
 data/*.db
 logs/*.log
+data/*.lock
+data/bot.lock
 
 # Arquivos temporários e cache do Python
 __pycache__/
