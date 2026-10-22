@@ -3,7 +3,7 @@ name: Scraper de Trabalho Remoto & Notificador
 on:
   schedule:
     # Executa a cada 12 horas (09:00 e 21:00 UTC)
-    - cron: "0 9,21 * * *"
+    - cron: "0 11,23 * * *"
   workflow_dispatch:
 
 jobs:
