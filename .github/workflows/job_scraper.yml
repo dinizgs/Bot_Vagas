@@ -2,8 +2,7 @@ name: Scraper de Trabalho Remoto & Notificador
 
 on:
   schedule:
-    # Executa a cada 12 horas (09:00 e 21:00 UTC)
-    - cron: "0 11,23 * * *"
+    - cron: "5 11,23 * * *"
   workflow_dispatch:
 
 jobs:
@@ -17,34 +16,29 @@ jobs:
       - name: Verificar o Repositório
         uses: actions/checkout@v4
 
-      # Configura o Python
-      - name: Coloca o Python 3.11
+      - name: Configurar Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
 
-      # Instala dependências do projeto
-      - name: Instalação de dependências
+      - name: Instalar dependências
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Instala o navegador do Playwright (Chromium) com dependências de sistema
-      - name: Instalação do Playwright com os browser
+      - name: Instalar Chromium para Playwright
         run: |
           playwright install chromium --with-deps
 
-      # Execução da varredura e cadenciada do bot
-      - name: Execução do script principal do bot
+      - name: Executar o bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python main.py
 
-      # Salva o banco de dados atualizado de volta no repositório
-      - name: Commit & Push da atualização do BD
+      - name: Salvar alterações do banco
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore(db): atualiza fila de vagas [skip ci]"

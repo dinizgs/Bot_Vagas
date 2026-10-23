@@ -155,12 +155,9 @@ if __name__ == "__main__":
         "--fonte", nargs="+", choices=list(SCRAPERS.keys()), default=list(SCRAPERS.keys()),
         help="Roda só as fontes indicadas (padrão: todas)"
     )
-    parser.add_argument(
-        "--silencioso", action="store_true",
-        help="Salva as vagas e marca todas como notificadas, sem enviar nada ao Telegram"
-    )
+
     args = parser.parse_args()
 
     with trava_execucao() as ativo:
         if ativo:
-            executar_bot(args.fonte, args.silencioso)
+            executar_bot(args.fonte)
