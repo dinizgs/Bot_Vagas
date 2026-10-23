@@ -116,7 +116,7 @@ def notificar_uma_vaga_pendente(db, notifier):
     return 0
 
 
-def executar_bot(nomes_fontes, silencioso):
+def executar_bot(nomes_fontes):
     tempo_inicio = time.time()
     logging.info("🚀 Iniciando varredura e ciclo de notificação")
 
@@ -131,13 +131,8 @@ def executar_bot(nomes_fontes, silencioso):
         total_salvas += salvas
 
     # Processamento das notificações unitárias
-    enviadas = 0
-    if silencioso:
-        marcadas = db.marcar_todas_como_notificadas()
-        logging.info(f"Modo silencioso: {marcadas} vagas marcadas como notificadas, sem envio.")
-    else:
-        notifier = TelegramNotifier()
-        enviadas = notificar_uma_vaga_pendente(db, notifier)
+    notifier = TelegramNotifier()
+    enviadas = notificar_uma_vaga_pendente(db, notifier)
 
     tempo_total = time.time() - tempo_inicio
 
