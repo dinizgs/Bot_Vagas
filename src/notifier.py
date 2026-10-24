@@ -9,7 +9,10 @@ load_dotenv(dotenv_path=RAIZ_PROJETO / ".env")
 
 class TelegramNotifier:
     def __init__(self):
-        token_raw = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+        self._carregar_credenciais()
+
+    def _carregar_credenciais(self):
+        token_raw = (os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN") or "").strip()
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
         if token_raw.lower().startswith("bot"):
@@ -23,12 +26,18 @@ class TelegramNotifier:
             self.url_base = None
 
     def esta_configurado(self):
+        # Recarrega as credenciais para garantir captura atualizada
+        self._carregar_credenciais()
+
         if not self.token or not self.chat_id:
             print("[Notifier] Credenciais (TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID) ausentes.")
             return False
         return True
 
     def disparar_mensagem(self, texto_html):
+        if not self.url_base:
+            return False
+
         payload = {
             "chat_id": self.chat_id,
             "text": texto_html,
