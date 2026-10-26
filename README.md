@@ -15,7 +15,8 @@ Um pipeline automatizado e autônomo que realiza a varredura contínua (*web scr
 Procurar vagas de TI em várias plataformas diariamente consome tempo e muitas vezes resulta em visualizações de oportunidades repetidas ou fora do perfil desejado.
 
 Este projeto resolve esse problema automatizando o ciclo completo de busca, filtragem e notificação. O bot roda de forma 100% autônoma em nuvem através do **GitHub Actions**, buscando novas vagas **duas vezes ao dia (08:05 e 20:05 BRT)** nas principais plataformas do mercado.
-**OBS: Como demora entre 20 minutos a 30 minutos para realizar a execução do bot, então não é exatamente no horário colocado!**
+
+> **Nota:** A execução completa leva cerca de 20 a 30 minutos devido aos tempos de espera (*delays* anti-bloqueio) e varreduras profundas, portanto os disparos e notificações finalizam ao longo desse intervalo.
 
 ---
 
@@ -25,7 +26,7 @@ Este projeto resolve esse problema automatizando o ciclo completo de busca, filt
   - **Gupy:** Captura via chamadas diretas à API pública.
   - **Remotar:** Scraping estruturado focado exclusivamente em vagas remotas.
   - **LinkedIn:** Automação via navegador headless (Playwright) para busca e extração de vagas recentes.
-- **Filtragem Inteligente & Anti-Sênior:** Algoritmo que descarte de forma rigorosa:
+- **Filtragem Inteligente & Anti-Sênior:** Algoritmo que descarta de forma rigorosa:
   - Vagas presenciais ou híbridas (foco 100% remoto).
   - Cargos Pleno, Sênior, Specialist e Lead (foco em níveis de entrada: *Estágio, Trainee, Júnior, Assistente*).
   - Vagas de fora do escopo de TI (Comercial, Financeiro, RH, etc.).
@@ -71,4 +72,21 @@ Este projeto resolve esse problema automatizando o ciclo completo de busca, filt
            └── É nova? ────> Salva no DB
                                 │
                                 ▼
-                 [ Telegram Notifier ]
+                      [ Telegram Notifier ]
+                                │
+                                ▼
+                  [ Git Auto-Commit (vagas.db) ]
+```
+
+---
+
+## 🔮 Futuras Implementações & Roadmap
+
+Propostas de melhorias e novas funcionalidades para evoluir a arquitetura e a precisão do bot:
+
+- [ ] **Interface Web / Dashboard:** Desenvolvimento de um painel simples (Streamlit ou FastAPI + React) para visualização e busca rápida das vagas armazenadas no banco de dados.
+- [ ] **Filtro Avançado com Inteligência Artificial:** Integração com LLMs (como OpenAI ou Gemini API) para análise do texto descritivo das vagas, garantindo uma classificação ainda mais precisa das competências exigidas e evitando *false positives*.
+- [ ] **Análise de Match com Currículo:** Leitura do PDF do currículo do usuário para calcular uma pontuação de aderência (*match score*) para cada vaga e destacá-la na notificação.
+- [ ] **Expansão de Plataformas:** Adição de novos scrapers para portais como Catho, Indeed, Glassdoor e Programathor.
+- [ ] **Notificações Personalizadas por Categorias:** Opção de filtrar ou categorizar notificações no Telegram através de tópicos (ex: canal separado para Backend, Frontend, Dados ou Estágio).
+- [ ] **Rotação de Proxies no LinkedIn:** Implementação de uma camada de rotação de IP/Proxies no scraper do LinkedIn para contornar o limite de requisições (HTTP 429) e expandir o volume de captura diária.
