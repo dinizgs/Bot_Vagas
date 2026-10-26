@@ -51,7 +51,7 @@ Este projeto resolve esse problema automatizando o ciclo completo de busca, filt
 ## 🏗️ Arquitetura e Fluxo de Execução
 
 ```text
-[ GitHub Actions Cron Trigger (08:00 e 20:00 BRT) ]
+[ GitHub Actions Cron Trigger (08:05 e 20:05 BRT) ]
                        │
                        ▼
          [ Execução do script main.py ]
